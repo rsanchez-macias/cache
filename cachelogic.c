@@ -190,15 +190,6 @@ int LRUToReplace ( int index ) {
 	return toReplace;
 }
 
-void printAddrInfo ( char* msg , int tag, int index, int offset ) {
-
-	printf("%s\n", msg);
-	printf("Tag: %x\tIndex: %d\tOffset: %d\n", tag, index, offset);
-
-	return;
-}
-
-
 unsigned int calculateAddr ( unsigned int tag, unsigned int index ) {
 	
 	unsigned int offsetBits = uint_log2(block_size);
@@ -349,8 +340,8 @@ void accessMemory(address addr, word* data, WriteEnable we)
 
 				if ( tag == cache[index].block[i].tag && cache[index].block[i].valid == 1 ) {
 					
-					word* data = (word*)(cache[index].block[i].data);
-					if ( data[offset / 4] == 0 ) {
+					word* blockData = (word*)(cache[index].block[i].data);
+					if ( blockData[offset / 4] == 0 ) {
 
 						notFound = 0;
 
@@ -434,6 +425,8 @@ void accessMemory(address addr, word* data, WriteEnable we)
 					dataIndex = insertIndex;
 
 					accessDRAM(addr, (void*)data, WORD_SIZE, WRITE);
+
+					resetBlock(index, insertIndex);
 
 					cache[index].block[insertIndex].valid = 1;
 					cache[index].block[insertIndex].tag = tag;
