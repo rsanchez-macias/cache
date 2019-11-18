@@ -90,7 +90,7 @@ unsigned int getMask ( unsigned int num ) {
 		case 16:
 			return 0xffff;
 		case 32:
-			return 0xfffff;
+			return 0xffffffff;
 	}
 
 	return 0;
