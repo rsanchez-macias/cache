@@ -89,6 +89,8 @@ unsigned int getMask ( unsigned int num ) {
 			return 0xff;
 		case 16:
 			return 0xffff;
+		case 32:
+			return 0xfffff;
 	}
 
 	return 0;
@@ -196,6 +198,19 @@ void printAddrInfo ( char* msg , int tag, int index, int offset ) {
 	return;
 }
 
+
+unsigned int calculateAddr ( unsigned int tag, unsigned int index ) {
+	
+	unsigned int offsetBits = uint_log2(block_size);
+	unsigned int indexBits = uint_log2(set_count);
+
+	unsigned int addr = tag << (offsetBits + indexBits);
+	addr = addr + (index << offsetBits);
+
+	return addr;
+}
+
+
 /*
   This is the primary function you are filling out,
   You are free to add helper functions if you need them
@@ -228,75 +243,151 @@ void accessMemory(address addr, word* data, WriteEnable we)
 	toTransfer = getTransferUnit();
 	getAddrInformation(addr, &tag, &index, &offset);
 
+
 	if ( end ) {
 
-		for ( int i = 0; i < assoc; i++ ) {
+		// handle case when we are just reading from the cache
+		if ( we == READ ) {
 
-			if ( tag == cache[index].block[i].tag && cache[index].block[i].valid == 1 ) {
-				notFound = 0;
-				
-				int blockIndex = getEmptyBlock(index);
+			// look for a hit and handle the case
+			for ( int i = 0; i < assoc; i++ ) {
 
-				if ( cache[index].block[i].lru.value != 1 )
-					updateLRU(index, i, blockIndex);
+				if ( tag == cache[index].block[i].tag && cache[index].block[i].valid == 1 ) {
+					notFound = 0;
+					
+					int blockIndex = getEmptyBlock(index);
 
-				// Highlight block in green if it matches
-				highlight_block(index, i);     
-				highlight_offset(index, i, offset, HIT);
+					if ( cache[index].block[i].lru.value != 1 )
+						updateLRU(index, i, blockIndex);
 
-				dataIndex = i;
+					// Highlight block in green if it matches
+					highlight_offset(index, i, offset, HIT);
 
-				printAddrInfo("From hit", tag, index, offset);
-	
-				break;
-			} 
+					dataIndex = i;	
+		
+					break;
+				} 
 
-		}
-
-
-		if ( notFound == 1 ) {
-
-			int insertIndex = getEmptyBlock(index);
-			int availability = insertIndex;
-
-			if ( availability == -1 ) {
-				insertIndex = LRUToReplace(index);
 			}
 
-			// DEBUG
-			printf("Accessing address: %x\n", addr - offset);
-			printf("\tAddress: %x\n", addr);
-			printf("\tOffset * 4: %x\n", offset * 4);
+
+			// Handle the case for a miss 
+			if ( notFound == 1 ) {
+
+				// TODO: Write back implementation for when there is a miss to replace a block
+
+				int insertIndex = getEmptyBlock(index);
+				int availability = insertIndex;
+
+				if ( availability == -1 ) {
+					insertIndex = LRUToReplace(index);
+				}
+
+				// HELLO - offset
+				accessDRAM(addr - offset, cache[index].block[insertIndex].data, toTransfer, READ);
+
+				cache[index].block[insertIndex].valid = 1;
+				cache[index].block[insertIndex].tag = tag;
+
+				if ( cache[index].block[insertIndex].lru.value != 1 )
+					updateLRU(index, insertIndex, availability);
+
+				highlight_block(index, insertIndex);
+				highlight_offset(index, insertIndex, offset, MISS);
 
 
-			accessDRAM(addr - offset, cache[index].block[insertIndex].data, toTransfer, READ);
-			cache[index].block[insertIndex].valid = 1;
-			cache[index].block[insertIndex].tag = tag;
+				dataIndex = insertIndex;
+			}
 
-			if ( cache[index].block[insertIndex].lru.value != 1 )
-				updateLRU(index, insertIndex, availability);
-
-			highlight_block(index, insertIndex);
-			highlight_offset(index, insertIndex, offset, MISS);
-
-
-			// int blockIndex = getEmptyBlock(index);
-			// updateLRU(index, 0, blockIndex);
-
-			// accessDRAM(addr, cache[index].block[0].data, toTransfer, READ);
-			// cache[index].block[0].tag = tag;
-			// cache[index].block[0].valid = 1;
-			// highlight_block(index, 0);
-			// highlight_offset(index, 0, offset, MISS);
-
-			printAddrInfo("From miss", tag, index, offset);
-
-			dataIndex = insertIndex;
 		}
+
+		else if ( we == WRITE ) {
+
+			/*
+
+			1. Find right block to store
+				i) tag matches and data is valid
+					- if it maches, check to see if block is free. If it, store data
+					- if it doesn't match, store block in a free or occupied block
+				ii) tag doesn't match
+					- go to the next case
+					- get empty block
+					- store the data
+
+			*/
+
+			for ( int i = 0; i < assoc; i++ ) {
+
+				if ( tag == cache[index].block[i].tag && cache[index].block[i].valid == 1 ) {
+					
+					if ( cache[index].block[i].data[offset] == 0 ) {
+
+						notFound = 0;
+
+						int blockIndex = getEmptyBlock(index);
+
+						if ( cache[index].block[i].lru.value != 1 )
+							updateLRU(index, i, blockIndex);
+
+
+						if ( policy == WRITE_THROUGH ) {
+							accessDRAM(addr, (void*)data, WORD_SIZE, WRITE);
+						}
+
+						dataIndex = i;	
+						
+						highlight_block(index, i);
+						highlight_offset(index, i, offset, MISS);
+			
+						break;
+					}
+				} 
+			}
+
+
+			if ( notFound == 1 ) {
+
+				if ( policy == WRITE_BACK ) {
+
+					
+
+				}
+
+				else {
+					
+					int insertIndex = getEmptyBlock(index);
+					int availability = insertIndex;
+
+					if ( availability == -1 ) {
+						insertIndex = LRUToReplace(index);
+					}
+
+					dataIndex = insertIndex;
+
+					accessDRAM(addr, (void*)data, WORD_SIZE, WRITE);
+
+					cache[index].block[insertIndex].valid = 1;
+					cache[index].block[insertIndex].tag = tag;
+
+					if ( cache[index].block[insertIndex].lru.value != 1 )
+						updateLRU(index, insertIndex, availability);
+
+					highlight_block(index, insertIndex);
+					highlight_offset(index, insertIndex, offset, MISS);
+				}
+			}
+
+		}	
 
 	}
 
-	memcpy((void*)data, (void*)(cache[index].block[dataIndex].data + offset), 4);
+	if ( we == READ ) {
+		memcpy((void*)data, (void*)(cache[index].block[dataIndex].data + offset), 4);
+	}
+	else if ( we == WRITE ) {
+		memcpy((void*)(cache[index].block[dataIndex].data + offset), (void*)data, 4);
+	}
+		
 
 	// Stop the program from going
 	if ( (long)(*data) ==  0xffffffff ) {
