@@ -210,6 +210,27 @@ unsigned int calculateAddr ( unsigned int tag, unsigned int index ) {
 	return addr;
 }
 
+void resetBlock ( unsigned int index, unsigned int insertIndex ) {
+
+	for ( int i = 0; i < block_size; i++ ) {
+		cache[index].block[insertIndex].data[i] = 0;
+	}
+
+	return;
+}
+
+void writeToMem ( unsigned int addr, unsigned int index, unsigned int insertIndex ) {
+
+	word* data = (word*)(cache[index].block[insertIndex].data);
+
+	for ( int i = 0; i < uint_log2(block_size); i++ ) {
+		if ( data[i] != 0 ) {
+			accessDRAM(addr + (4*i), (byte*)(data + i), WORD_SIZE, WRITE);
+		}
+	}
+
+	return;
+}
 
 /*
   This is the primary function you are filling out,
@@ -257,7 +278,7 @@ void accessMemory(address addr, word* data, WriteEnable we)
 					
 					int blockIndex = getEmptyBlock(index);
 
-					if ( cache[index].block[i].lru.value != 1 )
+					if ( policy == LRU && cache[index].block[i].lru.value != 1 )
 						updateLRU(index, i, blockIndex);
 
 					// Highlight block in green if it matches
@@ -274,22 +295,30 @@ void accessMemory(address addr, word* data, WriteEnable we)
 			// Handle the case for a miss 
 			if ( notFound == 1 ) {
 
-				// TODO: Write back implementation for when there is a miss to replace a block
-
 				int insertIndex = getEmptyBlock(index);
 				int availability = insertIndex;
 
 				if ( availability == -1 ) {
-					insertIndex = LRUToReplace(index);
+					if ( policy == LRU ) 
+						insertIndex = LRUToReplace(index);
+					else 
+						insertIndex = randomint(assoc);
 				}
 
-				// HELLO - offset
+			
+				if ( memory_sync_policy == WRITE_BACK && cache[index].block[insertIndex].dirty == 1 ) {
+					unsigned int previousAddr = calculateAddr(cache[index].block[insertIndex].tag, index);
+					
+					writeToMem(previousAddr, index, insertIndex);
+					cache[index].block[insertIndex].dirty = 0;
+				} 
+				
 				accessDRAM(addr - offset, cache[index].block[insertIndex].data, toTransfer, READ);
 
 				cache[index].block[insertIndex].valid = 1;
 				cache[index].block[insertIndex].tag = tag;
 
-				if ( cache[index].block[insertIndex].lru.value != 1 )
+				if ( policy == LRU && cache[index].block[insertIndex].lru.value != 1 )
 					updateLRU(index, insertIndex, availability);
 
 				highlight_block(index, insertIndex);
@@ -320,18 +349,23 @@ void accessMemory(address addr, word* data, WriteEnable we)
 
 				if ( tag == cache[index].block[i].tag && cache[index].block[i].valid == 1 ) {
 					
-					if ( cache[index].block[i].data[offset] == 0 ) {
+					word* data = (word*)(cache[index].block[i].data);
+					if ( data[offset / 4] == 0 ) {
 
 						notFound = 0;
 
 						int blockIndex = getEmptyBlock(index);
 
-						if ( cache[index].block[i].lru.value != 1 )
+						if ( policy == LRU && cache[index].block[i].lru.value != 1 )
 							updateLRU(index, i, blockIndex);
 
 
-						if ( policy == WRITE_THROUGH ) {
+						if ( memory_sync_policy == WRITE_THROUGH ) {
 							accessDRAM(addr, (void*)data, WORD_SIZE, WRITE);
+						}
+
+						if ( memory_sync_policy == WRITE_BACK ) {
+							cache[index].block[i].dirty = 1;
 						}
 
 						dataIndex = i;	
@@ -347,9 +381,41 @@ void accessMemory(address addr, word* data, WriteEnable we)
 
 			if ( notFound == 1 ) {
 
-				if ( policy == WRITE_BACK ) {
+				if ( memory_sync_policy == WRITE_BACK ) {
 
+					int insertIndex = getEmptyBlock(index);
+					int availability = insertIndex;
+
+					if ( availability == -1 ) {
+						if ( policy == LRU ) 
+							insertIndex = LRUToReplace(index);
+						else 
+							insertIndex = randomint(assoc);
+					}
+
+					dataIndex = insertIndex;
+
+
+					if ( cache[index].block[insertIndex].dirty == 1 ) {
+						unsigned int previousAddr = calculateAddr(cache[index].block[insertIndex].tag, index);
+						
+						writeToMem(previousAddr, index, insertIndex);
+						resetBlock(index, insertIndex);
+					}
+					else {
+						resetBlock(index, insertIndex);
+					}
 					
+					cache[index].block[insertIndex].dirty = 1;
+					cache[index].block[insertIndex].valid = 1;
+					cache[index].block[insertIndex].tag = tag;
+
+
+					if ( policy == LRU && cache[index].block[insertIndex].lru.value != 1 )
+						updateLRU(index, insertIndex, availability);
+
+					highlight_block(index, insertIndex);
+					highlight_offset(index, insertIndex, offset, MISS);
 
 				}
 
@@ -359,7 +425,10 @@ void accessMemory(address addr, word* data, WriteEnable we)
 					int availability = insertIndex;
 
 					if ( availability == -1 ) {
-						insertIndex = LRUToReplace(index);
+						if ( policy == LRU ) 
+							insertIndex = LRUToReplace(index);
+						else 
+							insertIndex = randomint(assoc);
 					}
 
 					dataIndex = insertIndex;
@@ -369,7 +438,7 @@ void accessMemory(address addr, word* data, WriteEnable we)
 					cache[index].block[insertIndex].valid = 1;
 					cache[index].block[insertIndex].tag = tag;
 
-					if ( cache[index].block[insertIndex].lru.value != 1 )
+					if ( policy == LRU && cache[index].block[insertIndex].lru.value != 1 )
 						updateLRU(index, insertIndex, availability);
 
 					highlight_block(index, insertIndex);
